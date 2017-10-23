@@ -129,9 +129,10 @@ class ProcessAgent(Process):
 
     def convert_data(self, updated_experiences):
         x_ = np.array([exp.state for exp in updated_experiences])
-        a_ = np.eye(self.num_actions)[np.array([exp.action_index for exp in updated_experiences])].astype(np.float32)
-        r_ = np.array([exp.reward for exp in updated_experiences])
-        return x_, r_, a_
+        #a_ = np.eye(self.num_actions)[np.array([exp.action_index for exp in updated_experiences])].astype(np.float32)
+        #r_ = np.array([exp.reward for exp in updated_experiences])
+        y_ = np.array([exp.prediction for exp in updated_experiences])
+        return x_, y_
 
     def predict(self, state):
         # put the state in the prediction q
