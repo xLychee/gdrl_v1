@@ -187,7 +187,7 @@ class ProcessAgent(Process):
             #experiences.append(exp)
             experience_queue.append(exp)
             updated_exps += ProcessAgent._accumulate_rewards(experience_queue, self.discount_factor, done)
-            print(len(experience_queue), len(updated_exps))
+            print(len(experience_queue), len(updated_exps), time_count)
             if (done or time_count == Config.TIME_MAX) and len(updated_exps)>0:
                 #terminal_reward = 0 if done else value
                 #updated_exps = ProcessAgent._accumulate_rewards(experiences, self.discount_factor, terminal_reward)
@@ -201,7 +201,6 @@ class ProcessAgent(Process):
                 #experiences = [experiences[-1]]
                 reward_sum = 0.0
                 updated_exps = []
-
             time_count += 1
         if self.epsilon>self.epsilon_min:
             self.epsilon *= self.epsilon_decay
