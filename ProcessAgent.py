@@ -191,14 +191,12 @@ class ProcessAgent(Process):
             if done or time_count == Config.TIME_MAX:
                 #terminal_reward = 0 if done else value
                 #updated_exps = ProcessAgent._accumulate_rewards(experiences, self.discount_factor, terminal_reward)
-                x_, y_ = self.convert_data(updated_exps)
+                if len(updated_exps)>0:
+                    x_, y_ = self.convert_data(updated_exps)
+                    yield x_, y_, reward_sum
                 print("len of updated_exps: ", len(updated_exps))
-                yield x_, y_,  reward_sum
-
                 # reset the tmax count
                 time_count = 0
-                # keep the last experience for the next batch
-                #experiences = [experiences[-1]]
                 reward_sum = 0.0
                 updated_exps = []
             time_count += 1
