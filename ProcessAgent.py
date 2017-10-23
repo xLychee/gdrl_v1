@@ -188,7 +188,7 @@ class ProcessAgent(Process):
             experience_queue.append(exp)
             updated_exps += ProcessAgent._accumulate_rewards(experience_queue, self.discount_factor, done)
             print(len(experience_queue), len(updated_exps), time_count, Config.TIME_MAX)
-            if (done or time_count == Config.TIME_MAX) and len(updated_exps)>0:
+            if done or time_count == Config.TIME_MAX:
                 #terminal_reward = 0 if done else value
                 #updated_exps = ProcessAgent._accumulate_rewards(experiences, self.discount_factor, terminal_reward)
                 x_, y_ = self.convert_data(updated_exps)
