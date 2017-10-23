@@ -58,24 +58,59 @@ class ProcessAgent(Process):
         #### My Part
         self.epsilon = 0.0
         self.epsilon_decay = np.random.choice([0.99,0.995,0.95])
-        self.epsilon_min = 0.1
+        self.epsilon_min = np.random.choice([0.1,0.01,0.5])
 
         self.action_sequence = deque(maxlen=2)
 
     @staticmethod
-    def _accumulate_rewards(experiences, discount_factor, value, done):
-        reward_sum = 0 if done else value
+    def _accumulate_rewards(experiences, discount_factor, done):
         return_list = []
+        if not done and len(experiences) < Config.LOOK_AHEAD_STEPS+1:
+            return []
         if done:
+            r = np.clip(experiences[-1].reward, Config.REWARD_MIN, Config.REWARD_MAX)
             for acs in Config.ENLARGED_ACTION_SET:
-                if len(acs)>1 and acs[0] == experiences[-1].action:
+                if acs[0] == experiences[-1].action:
                     action_index = Config.ACTION_INDEX_MAP[acs]
-                    r = np.clip(experiences[-1].reward, Config.REWARD_MIN, Config.REWARD_MAX)
-                    uexp = UpdatedExperience(experiences[-1].state, action_index, experiences[-1].prediction, r)
-                    return_list.append(uexp)
-                    #print("done:",acs, action_index, experiences[-1].prediction, r)
+                    experiences[-1].prediction[action_index] = r
+            reward_sum = r
+            last_index = len(experiences) - Config.LOOK_AHEAD_STEPS - 1
+            action_sequence = (experiences[-1].action,)
+            for t in reversed(range(last_index, len(experiences) - 1)):
+                action_sequence = (experiences[t].action,) + action_sequence
+                r = np.clip(experiences[t].reward, Config.REWARD_MIN, Config.REWARD_MAX)
+                reward_sum = discount_factor * reward_sum + r
+                for i in range(1, len(action_sequence) + 1):
+                    if action_sequence[:i] in Config.ENLARGED_ACTION_SET:
+                        action_index = Config.ACTION_INDEX_MAP[action_sequence[:i]]
+                        experiences[t].prediction[action_index] = reward_sum
+            t = last_index - 1
+            if t >= 0:
+                r = np.clip(experiences[t].reward, Config.REWARD_MIN, Config.REWARD_MAX)
+                reward_sum = discount_factor * reward_sum + r
+                action_sequence = (experiences[t].action, experiences[t + 1].action)
+                if action_sequence in Config.ENLARGED_ACTION_SET:
+                    action_index = Config.ACTION_INDEX_MAP[action_sequence]
+                    experiences[t].prediction[action_index] = reward_sum
+
+            for i in range(len(experiences)):
+                uexp = UpdatedExperience(experiences[i].state, experiences[i].prediction)
+                return_list.append(uexp)
+
+            return return_list
+
+        last_index = len(experiences) - Config.LOOK_AHEAD_STEPS
+        assert last_index > 0
+        value_index = len(experiences)-1 #np.random.choice(range(last_index+1,len(experiences)))
+        assert value_index > last_index and value_index < len(experiences)
+        reward_sum = np.amax(experiences[value_index].prediction)
+        #last_index = len(experiences) - Config.LOOK_AHEAD_STEPS
+        for t in reversed(range(last_index, value_index)):
+            r = np.clip(experiences[t].reward, Config.REWARD_MIN, Config.REWARD_MAX)
+            reward_sum = discount_factor * reward_sum + r
+
         action_sequence = ()
-        for t in reversed(range(0, len(experiences))):
+        for t in reversed(range(0, last_index)):
             r = np.clip(experiences[t].reward, Config.REWARD_MIN, Config.REWARD_MAX)
             action = experiences[t].action
             action_sequence = (action,) + action_sequence
@@ -83,10 +118,13 @@ class ProcessAgent(Process):
                 break
             action_index = Config.ACTION_INDEX_MAP[action_sequence]
             reward_sum = discount_factor * reward_sum + r
-            uexp = UpdatedExperience(experiences[t].state, action_index, experiences[t].prediction, reward_sum)
+            experiences[t].prediction[action_index] = reward_sum
+            if np.random.rand() < 0.0001:
+                print("len of return:",len(return_list), action_sequence, action_index, experiences[t].prediction, reward_sum)
+        while len(experiences) > Config.LOOK_AHEAD_STEPS + 4:
+            exp = experiences.popleft()
+            uexp = UpdatedExperience(exp.state, exp.prediction)
             return_list.append(uexp)
-            if  np.random.rand() < 0.0001:
-                print(action_sequence, action_index, experiences[t].prediction, reward_sum)
         return return_list
 
     def convert_data(self, updated_experiences):
@@ -99,8 +137,8 @@ class ProcessAgent(Process):
         # put the state in the prediction q
         self.prediction_q.put((self.id, state))
         # wait for the prediction to come back
-        p, v = self.wait_q.get()
-        return p, v
+        p = self.wait_q.get()
+        return p
 
     def select_action(self, prediction):
         if self.action_sequence:
@@ -114,10 +152,8 @@ class ProcessAgent(Process):
             if np.random.rand() <= self.epsilon:
                 self.action_sequence.append(np.random.choice(Config.BASIC_ACTION_SET))
             else:
-                action_index = np.random.choice(range(self.num_actions), p=prediction)
+                action_index = np.argmax(prediction)
                 action_set = Config.ACTION_INDEX_MAP[action_index]
-                if not isinstance(action_set, tuple):
-                    print(action_index, action_set)
                 assert isinstance(action_set, tuple)
                 for a in action_set:
                     self.action_sequence.append(a)
@@ -133,7 +169,7 @@ class ProcessAgent(Process):
         time_count = 0
         reward_sum = 0.0
 
-        experience_queue = deque(maxlen=10)
+        experience_queue = deque()
         updated_exps = []
 
         while not done:
@@ -142,14 +178,14 @@ class ProcessAgent(Process):
                 self.env.step(0)  # 0 == NOOP
                 continue
 
-            prediction, value = self.predict(self.env.current_state)
+            prediction = self.predict(self.env.current_state)
             action = self.select_action(prediction)
             reward, done = self.env.step(action)
             reward_sum += reward
             exp = Experience(self.env.previous_state, action, prediction, reward, done)
             #experiences.append(exp)
             experience_queue.append(exp)
-            updated_exps += ProcessAgent._accumulate_rewards(experience_queue, self.discount_factor, value, done)
+            updated_exps += ProcessAgent._accumulate_rewards(experience_queue, self.discount_factor, done)
 
             if (done or time_count == Config.TIME_MAX) and updated_exps:
                 #terminal_reward = 0 if done else value

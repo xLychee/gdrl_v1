@@ -68,7 +68,7 @@ class NetworkVP:
     def _create_graph(self):
         self.x = tf.placeholder(
             tf.float32, [None, self.img_height, self.img_width, self.img_channels], name='X')
-        self.y_r = tf.placeholder(tf.float32, [None], name='Yr')
+        self.y = tf.placeholder(tf.float32, [None, self.num_actions], name='Y')
 
         self.var_beta = tf.placeholder(tf.float32, name='beta', shape=[])
         self.var_learning_rate = tf.placeholder(tf.float32, name='lr', shape=[])
@@ -76,21 +76,23 @@ class NetworkVP:
         self.global_step = tf.Variable(0, trainable=False, name='step')
 
         # As implemented in A3C paper
-        self.n1 = self.conv2d_layer(self.x, 8, 16, 'conv11', strides=[1, 4, 4, 1])
-        self.n2 = self.conv2d_layer(self.n1, 4, 32, 'conv12', strides=[1, 2, 2, 1])
+        self.n1 = self.conv2d_layer(self.x, 8, 32, 'conv11', strides=[1, 4, 4, 1])
+        self.n2 = self.conv2d_layer(self.n1, 4, 64, 'conv12', strides=[1, 2, 2, 1])
+        self.n3 = self.conv2d_layer(self.n2, 3, 64, 'conv13', strides=[1, 1, 1, 1])
+
         self.action_index = tf.placeholder(tf.float32, [None, self.num_actions])
-        _input = self.n2
+        _input = self.n3
 
         flatten_input_shape = _input.get_shape()
         nb_elements = flatten_input_shape[1] * flatten_input_shape[2] * flatten_input_shape[3]
 
         self.flat = tf.reshape(_input, shape=[-1, nb_elements._value])
-        self.d1 = self.dense_layer(self.flat, 256, 'dense1')
-
-        self.logits_v = tf.squeeze(self.dense_layer(self.d1, 1, 'logits_v', func=None), axis=[1])
-        self.cost_v = 0.5 * tf.reduce_sum(tf.square(self.y_r - self.logits_v), axis=0)
-
-        self.logits_p = self.dense_layer(self.d1, self.num_actions, 'logits_p', func=None)
+        self.d1 = self.dense_layer(self.flat, 512, 'dense1', func=tf.nn.relu)
+        self.d2 = self.dense_layer(self.d1, self.num_actions, 'logits_p', func=None)
+        #self.logits_v = tf.squeeze(self.dense_layer(self.d1, 1, 'logits_v', func=None), axis=[1])
+        #self.cost_v = 0.5 * tf.reduce_sum(tf.square(self.y_r - self.logits_v), axis=0)
+        #self.logits_p = self.dense_layer(self.d1, self.num_actions, 'logits_p', func=None)
+        '''
         if Config.USE_LOG_SOFTMAX:
             self.softmax_p = tf.nn.softmax(self.logits_p)
             self.log_softmax_p = tf.nn.log_softmax(self.logits_p)
@@ -108,62 +110,25 @@ class NetworkVP:
             self.cost_p_2 = -1 * self.var_beta * \
                         tf.reduce_sum(tf.log(tf.maximum(self.softmax_p, self.log_epsilon)) *
                                       self.softmax_p, axis=1)
-        
-        self.cost_p_1_agg = tf.reduce_sum(self.cost_p_1, axis=0)
-        self.cost_p_2_agg = tf.reduce_sum(self.cost_p_2, axis=0)
-        self.cost_p = -(self.cost_p_1_agg + self.cost_p_2_agg)
-        
-        if Config.DUAL_RMSPROP:
-            self.opt_p = tf.train.RMSPropOptimizer(
-                learning_rate=self.var_learning_rate,
-                decay=Config.RMSPROP_DECAY,
-                momentum=Config.RMSPROP_MOMENTUM,
-                epsilon=Config.RMSPROP_EPSILON)
-
-            self.opt_v = tf.train.RMSPropOptimizer(
-                learning_rate=self.var_learning_rate,
-                decay=Config.RMSPROP_DECAY,
-                momentum=Config.RMSPROP_MOMENTUM,
-                epsilon=Config.RMSPROP_EPSILON)
-        else:
-            self.cost_all = self.cost_p + self.cost_v
-            self.opt = tf.train.RMSPropOptimizer(
-                learning_rate=self.var_learning_rate,
-                decay=Config.RMSPROP_DECAY,
-                momentum=Config.RMSPROP_MOMENTUM,
-                epsilon=Config.RMSPROP_EPSILON)
+        '''
+        self.cost_all = tf.losses.mean_squared_error(self.y, self.d2)
+        self.opt = tf.train.RMSPropOptimizer(
+            learning_rate=self.var_learning_rate,
+            decay=Config.RMSPROP_DECAY,
+            momentum=Config.RMSPROP_MOMENTUM,
+            epsilon=Config.RMSPROP_EPSILON)
 
         if Config.USE_GRAD_CLIP:
-            if Config.DUAL_RMSPROP:
-                self.opt_grad_v = self.opt_v.compute_gradients(self.cost_v)
-                self.opt_grad_v_clipped = [(tf.clip_by_norm(g, Config.GRAD_CLIP_NORM),v) 
-                                            for g,v in self.opt_grad_v if not g is None]
-                self.train_op_v = self.opt_v.apply_gradients(self.opt_grad_v_clipped)
-            
-                self.opt_grad_p = self.opt_p.compute_gradients(self.cost_p)
-                self.opt_grad_p_clipped = [(tf.clip_by_norm(g, Config.GRAD_CLIP_NORM),v)
-                                            for g,v in self.opt_grad_p if not g is None]
-                self.train_op_p = self.opt_p.apply_gradients(self.opt_grad_p_clipped)
-                self.train_op = [self.train_op_p, self.train_op_v]
-            else:
                 self.opt_grad = self.opt.compute_gradients(self.cost_all)
                 self.opt_grad_clipped = [(tf.clip_by_average_norm(g, Config.GRAD_CLIP_NORM),v) for g,v in self.opt_grad]
                 self.train_op = self.opt.apply_gradients(self.opt_grad_clipped)
         else:
-            if Config.DUAL_RMSPROP:
-                self.train_op_v = self.opt_p.minimize(self.cost_v, global_step=self.global_step)
-                self.train_op_p = self.opt_v.minimize(self.cost_p, global_step=self.global_step)
-                self.train_op = [self.train_op_p, self.train_op_v]
-            else:
                 self.train_op = self.opt.minimize(self.cost_all, global_step=self.global_step)
 
 
     def _create_tensor_board(self):
         summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
-        summaries.append(tf.summary.scalar("Pcost_advantage", self.cost_p_1_agg))
-        summaries.append(tf.summary.scalar("Pcost_entropy", self.cost_p_2_agg))
-        summaries.append(tf.summary.scalar("Pcost", self.cost_p))
-        summaries.append(tf.summary.scalar("Vcost", self.cost_v))
+        summaries.append(tf.summary.scalar("cost", self.cost_all))
         summaries.append(tf.summary.scalar("LearningRate", self.var_learning_rate))
         summaries.append(tf.summary.scalar("Beta", self.var_beta))
         for var in tf.trainable_variables():
@@ -171,9 +136,9 @@ class NetworkVP:
 
         summaries.append(tf.summary.histogram("activation_n1", self.n1))
         summaries.append(tf.summary.histogram("activation_n2", self.n2))
-        summaries.append(tf.summary.histogram("activation_d2", self.d1))
-        summaries.append(tf.summary.histogram("activation_v", self.logits_v))
-        summaries.append(tf.summary.histogram("activation_p", self.softmax_p))
+        summaries.append(tf.summary.histogram("activation_n3", self.n3))
+        summaries.append(tf.summary.histogram("activation_d1", self.d1))
+        summaries.append(tf.summary.histogram("activation_d2", self.d2))
 
         self.summary_op = tf.summary.merge(summaries)
         self.log_writer = tf.summary.FileWriter("logs/%s" % self.model_name, self.sess.graph)
@@ -218,28 +183,28 @@ class NetworkVP:
         step = self.sess.run(self.global_step)
         return step
 
-    def predict_single(self, x):
-        return self.predict_p(x[None, :])[0]
+    #def predict_single(self, x):
+    #    return self.predict_p(x[None, :])[0]
 
-    def predict_v(self, x):
-        prediction = self.sess.run(self.logits_v, feed_dict={self.x: x})
-        return prediction
+    #def predict_v(self, x):
+    #    prediction = self.sess.run(self.logits_v, feed_dict={self.x: x})
+    #    return prediction
 
-    def predict_p(self, x):
-        prediction = self.sess.run(self.softmax_p, feed_dict={self.x: x})
-        return prediction
+    #def predict_p(self, x):
+    #    prediction = self.sess.run(self.softmax_p, feed_dict={self.x: x})
+    #    return prediction
     
-    def predict_p_and_v(self, x):
-        return self.sess.run([self.softmax_p, self.logits_v], feed_dict={self.x: x})
+    def predict(self, x):
+        return self.sess.run(self.d2 , feed_dict={self.x: x})
     
-    def train(self, x, y_r, a, trainer_id):
+    def train(self, x, y, trainer_id):
         feed_dict = self.__get_base_feed_dict()
-        feed_dict.update({self.x: x, self.y_r: y_r, self.action_index: a})
+        feed_dict.update({self.x: x, self.y: y})
         self.sess.run(self.train_op, feed_dict=feed_dict)
 
-    def log(self, x, y_r, a):
+    def log(self, x, y):
         feed_dict = self.__get_base_feed_dict()
-        feed_dict.update({self.x: x, self.y_r: y_r, self.action_index: a})
+        feed_dict.update({self.x: x, self.y: y})
         step, summary = self.sess.run([self.global_step, self.summary_op], feed_dict=feed_dict)
         self.log_writer.add_summary(summary, step)
 

@@ -33,8 +33,6 @@ class Experience:
         self.done = done
 
 class UpdatedExperience:
-    def __init__(self, state, action_index, prediction, reward):
+    def __init__(self, state, prediction):
         self.state = state
-        self.action_index = action_index
         self.prediction = prediction
-        self.reward = reward

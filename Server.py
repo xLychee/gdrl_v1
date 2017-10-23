@@ -85,8 +85,8 @@ class Server:
         self.trainers[-1].join()
         self.trainers.pop()
 
-    def train_model(self, x_, r_, a_, trainer_id):
-        self.model.train(x_, r_, a_, trainer_id)
+    def train_model(self, x_, y_, trainer_id):
+        self.model.train(x_, y_, trainer_id)
         self.training_step += 1
         self.frame_counter += x_.shape[0]
 
@@ -94,7 +94,7 @@ class Server:
         self.dynamic_adjustment.temporal_training_count += 1
 
         if Config.TENSORBOARD and self.stats.training_count.value % Config.TENSORBOARD_UPDATE_FREQUENCY == 0:
-            self.model.log(x_, r_, a_)
+            self.model.log(x_, y_)
 
     def save_model(self):
         self.model.save(self.stats.episode_count.value)
